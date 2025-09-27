@@ -300,11 +300,10 @@
         const { useState, useEffect } = React;
 
         /*
-         * Assumes 'retail_prices.csv' is in the following format (without quotes):
-         * id,name,retail_price
-         * 1,Basmati Rice 5kg,1550
-         * 2,Premium Tea Bags (100ct),980
-         * 3,Organic Olive Oil 1L,4200
+         * Assumes 'retail_prices.csv' is in the following format:
+         * ProductName,RetailPrice
+         * Basmati Rice 5kg,1550
+         * Premium Tea Bags (100ct),980
          */
         const csvToJson = (csv) => {
             const lines = csv.trim().split('\n');
@@ -318,6 +317,7 @@
                 const line = lines[i].trim();
                 if (!line) continue;
 
+                // Simple comma split. NOTE: This will fail if product names contain commas!
                 const values = line.split(','); 
                 
                 if (values.length !== headers.length) {
@@ -336,7 +336,7 @@
         };
 
 
-        // SVG Icons for the buttons (using inline SVG is better than lucide-react in static HTML)
+        // SVG Icons for the buttons
         const InstagramIcon = () => (
             <svg className="social-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="20" x="2" y="2" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/></svg>
         );
@@ -365,9 +365,9 @@
                 <div className="list-item">
                     <div className="item-info">
                         <div className="status-dot" style={{ backgroundColor: statusColor }} title="Status Indicator"></div>
-                        <span className="item-name">{name}</span>
+                        <span className="item-name">{name || 'N/A'}</span>
                     </div>
-                    <span className="item-price">Rs. {retail_price}</span>
+                    <span className="item-price">Rs. {retail_price || 'N/A'}</span>
                 </div>
             );
         };
@@ -393,29 +393,53 @@
                         return response.text();
                     })
                     .then(csvText => {
-                        const parsedData = csvToJson(csvText);
+                        let parsedData;
+                        try {
+                            parsedData = csvToJson(csvText);
+                        } catch (e) {
+                            // Catch error during CSV parsing
+                            throw new Error(`CSV Parsing Failed: ${e.message}`);
+                        }
                         
-                        // Format the price column for display (e.g., 1550 -> 1,550)
-                        const formattedData = parsedData.map(item => {
-                            let price = item.retail_price;
+                        // Map CSV data (ProductName, RetailPrice) to the expected internal format (id, name, retail_price)
+                        const formattedData = parsedData.map((item, index) => {
+                            // Map the keys from the user's CSV
+                            const name = item.ProductName;
+                            const priceRaw = item.RetailPrice;
+
+                            // Safety check: ensure required fields exist using the new keys
+                            if (!name || !priceRaw) {
+                                console.warn(`Skipping item at index ${index + 1} due to missing ProductName or RetailPrice.`, item);
+                                return null; // Filter out invalid items later
+                            }
+                            
+                            let priceFormatted = priceRaw;
                             try {
                                 // Strip non-digit characters and format as currency string
-                                price = parseFloat(price.replace(/[^0-9.]/g, '')).toLocaleString('en-US', {
+                                priceFormatted = parseFloat(String(priceRaw).replace(/[^0-9.]/g, '')).toLocaleString('en-US', {
                                     minimumFractionDigits: 0,
                                     maximumFractionDigits: 0
                                 });
                             } catch (e) {
-                                console.warn(`Could not format price for product ID ${item.id}. Using raw value.`);
+                                console.warn(`Could not format price for product: ${name}. Using raw value.`);
                             }
-                            return { ...item, retail_price: price };
-                        });
+                            
+                            // Return the standardized object, generating 'id' using the index
+                            return { 
+                                id: index + 1, // Generate a unique, stable ID for React key
+                                name: name,
+                                retail_price: priceFormatted 
+                            };
+                            
+                        }).filter(item => item !== null); // Filter out the invalid items
                         
                         setProducts(formattedData);
                         setIsLoading(false);
                     })
                     .catch(err => {
-                        console.error("Error fetching or parsing CSV:", err);
-                        setError(`Data load failed. Check the console for details. Message: ${err.message}`);
+                        console.error("Data load failed:", err);
+                        // This catches fetch errors and parsing/formatting errors thrown above
+                        setError(`Data Load Failed: ${err.message}. Please verify the contents and location of 'retail_prices.csv'.`);
                         setIsLoading(false);
                     });
             }, []);
